@@ -1,0 +1,114 @@
+---
+title: "Web Scraping Data Sekolah di Provinsi Banten"
+author: "asepzulka"
+date: "3/11/2021"
+output: html_document
+---
+Data sekolah yang akan diambil adalah data sekolah di provinsi banten pada seluruh jenjang pendidikan. Data ini diambil dari website resmi [Kemdikbud](https://referensi.data.kemdikbud.go.id/index11.php). 
+_Mari kita mulai_
+langkah paling awal adalah **loading** package yang akan kita gunakan, yaitu `rvest`, `httr`, `stringr`, dan `dplyr`
+```{r, warning = F, message =F}
+library(rvest)
+library(stringr)
+library(dplyr)
+library(httr)
+```
+Sebagai langkah pertama, kita akan membaca laman web yang akan kita scrape, dalam hal ini adalah laman data sekolah di Provinsi [Banten](https://referensi.data.kemdikbud.go.id/index11.php?kode=280000&level=1). 
+```{r}
+lamanweb <- read_html("https://referensi.data.kemdikbud.go.id/index11.php?kode=280000&level=1")
+```
+Selanjutnya, kita ambil beberapa data penting di provinsi banten, seperti `id` yang nantinya akan digunakan sebagai `primary key`, nama `kabupaten`, dan `url` dari masing-masing kabupaten.
+```{r}
+# mengambil beberapa elemen penting dari laman data sekolah provinsi banten
+
+id <- lamanweb %>% 
+  html_elements(xpath = '//*[@id="box-table-a"]/tbody/tr/td[1]') %>% 
+  html_text() %>% 
+  str_trim()
+id <- id[-1]
+
+# mengambil nama kabupaten
+
+label <- lamanweb %>% 
+  html_elements(xpath = '//*[@id="box-table-a"]/tbody/tr/td[2]/a') %>% 
+  html_text() %>% 
+  str_trim()
+
+# url dari tiap-tiao kabupaten
+
+lamankab <- lamanweb %>% 
+  html_elements(xpath = '//*[@id="box-table-a"]/tbody/tr/td[2]/a') %>% 
+  html_attr("href") %>% 
+  str_trim()
+# digabung menjadi sebuah data frame dengan kolom id, kabupatenkota, dan url
+banten <- data.frame(id = id, kabupatenkota = label, url = lamankab)
+```
+
+Selanjutnya, dari tiap-tiap kabupaten, diambil data kecamatan, dengan `id` sebagai primary key, nama kecamatan, serta url dari masing-masing kecamatan. Diakhiri dengan membuat sebuah data frame berisikan data kecamatan-kecamatan dari seluruh kabupaten di provinsi banten.
+
+```{r, message=F, warning=F}
+kecamatan = NULL
+for (idkab in banten$id) {
+  
+  resp <- GET(paste0("https://referensi.data.kemdikbud.go.id/", banten %>% filter(id == idkab) %>% .$url
+                     )) %>% 
+    content("text")
+  
+  resp <- read_html(paste0("<html><body>", resp, "</body></html>"))
+  
+  id <- resp %>% 
+    html_elements(xpath = '//*[@id="box-table-a"]/tbody/tr/td[1]') %>% 
+    html_text() %>% 
+    str_trim()
+  id <- id[-1]
+
+  label <- resp %>% 
+    html_elements(xpath = '//*[@id="box-table-a"]/tbody/tr/td[2]/a') %>%  
+    html_text() %>% 
+    str_trim()
+
+  lamankec <- resp %>% 
+    html_elements(xpath = '//*[@id="box-table-a"]/tbody/tr/td[2]/a') %>% 
+    html_attr("href") %>% 
+    str_trim()
+
+  tmp_kecamatan <- data.frame(idkabupaten = idkab, id = id, kecamatan = label, url = lamankec)
+  
+  if(is.null(kecamatan)) kecamatan = tmp_kecamatan
+  else kecamatan = rbind(kecamatan, tmp_kecamatan)
+}
+```
+
+Langkah yang dilakukan selanjutnya adalah mengambil tabel data sekolah dari tiap kecamatan, dan kabupaten yang ada di provinsi banten.
+
+```{r, warning=F, message=F}
+sekolah <-NULL
+
+for (idkab in banten$id) {
+  for (kecid in kecamatan %>% filter(idkabupaten == idkab) %>% .$id) {
+    resp <- GET(paste0("https://referensi.data.kemdikbud.go.id/", kecamatan %>% filter(idkabupaten == idkab, id == kecid) %>% .$url
+                       )) %>% 
+      content("text")
+    
+    resp <- read_html(paste0("<html><body>", resp, "</html></body>"))
+    
+    tmp_sekolah <- resp %>% 
+      html_elements(xpath = '//*[@id="example"]') %>% 
+      html_table() %>% 
+      data.frame()
+    
+    if(is.null(sekolah)) sekolah = tmp_sekolah
+    else sekolah = rbind(sekolah, tmp_sekolah)
+  }
+}
+
+```
+
+Langkah terakhir adalah membuat sebuah file berekstensi `csv` berisi data sekolah di seluruh provinsi banten
+
+```{r}
+if(!is.null(sekolah)) write.csv(sekolah, "Sekolah Banten.csv")
+
+```
+
+Source code ini dapat digunakan pada seluruh Provinsi, alasan hanya diambil data sekolah dari provinsi banten, karena akan memakan waktu yang cukup lama untuk meng-**scrape** data sekolah dari seluruh provinsi di Indonesia, termasuk Sekolah Indonesia (SI) di luar negeri.
